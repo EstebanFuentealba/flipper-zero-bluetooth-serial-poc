@@ -2,7 +2,11 @@
 A Proof of Concept for Bluetooth Serial Communication with Flipper Zero.
 
 
-## Limks
+## Demo
+https://estebanfuentealba.github.io/flipper-zero-bluetooth-serial-poc/
+
+
+## Links
 
 ### Web API Bluetooth
 https://developer.mozilla.org/en-US/docs/Web/API/Bluetooth
