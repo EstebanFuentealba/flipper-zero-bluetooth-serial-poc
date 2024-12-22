@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>POC Flipper Zero Bluetooth Serial</title>
+</head>
+<body>
+    <button type="button" id="connectButton">Connect</button>
+    <pre id="result"></pre>
+    <script src="https://cdn.jsdelivr.net/npm/protobufjs@7.4.0/dist/minimal/protobuf.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/loglevel@1.8.0/dist/loglevel.min.js"></script>
+    <script type="importmap">
+    {
+        "imports": {
+                "nanoevents": "https://cdn.jsdelivr.net/npm/nanoevents@9.1.0/index.js"
+        }
+      }
+    </script>
+    <script type="module">
+        import { PB } from "./protobufCompiled.js"
+
+        const BLESerialService = {
+            SERVICE_UUID: "8fe5b3d5-2e7f-4a98-2a48-7acc60fe0000",
+            TX: "19ed82ae-ed21-4c9d-4145-228e62fe0000",
+            RX: "19ed82ae-ed21-4c9d-4145-228e61fe0000",
+            OVERFLOW: "19ed82ae-ed21-4c9d-4145-228e63fe0000",
+            RPC_STATE: "19ed82ae-ed21-4c9d-4145-228e64fe0000"
+        };
+
+        const GenericService = {
+            SERVICE_UUID: "00001800-0000-1000-8000-00805f9b34fb", // <?
+            DEVICE_NAME: "00002a00-0000-1000-8000-00805f9b34fb"
+        };
+        // BLE information service uuids: service uuid and characteristics uuids
+        const BLEInformationService = {
+            SERVICE_UUID: "0000180a-0000-1000-8000-00805f9b34fb",
+            MANUFACTURER: "00002a29-0000-1000-8000-00805f9b34fb",
+            // Example: f5, f6. Revision of hardware
+            HARDWARE_VERSION: "00002a26-0000-1000-8000-00805f9b34fb",
+            SOFTWARE_VERSION: "00002a28-0000-1000-8000-00805f9b34fb",
+            API_VERSION: "03f6666d-ae5e-47c8-8e1a-5d873eb5a933",
+        };
+
+        const BatteryService = {
+            SERVICE_UUID: "0000180f-0000-1000-8000-00805f9b34fb",
+
+            BATTERY_LEVEL: "00002a19-0000-1000-8000-00805f9b34fb",
+            BATTERY_POWER_STATE: "00002A1A-0000-1000-8000-00805f9b34fb",
+            BATTERY_POWER_STATE_MASK: 0b0011_0000
+        };
+
+
+
+        const connectButton = document.getElementById('connectButton');
+        const resultPre = document.getElementById('result');
+        
+        var device, server, tx, rx;
+
+        async function delay(ms) {
+            await new Promise((resolve)=> {
+                    setTimeout(()=> {
+                        resolve();
+                    }, ms);
+                })
+        }
+        async function getBatteryLevel(server) {
+            const service = await server.getPrimaryService(BatteryService.SERVICE_UUID);
+            const characteristic = await service.getCharacteristic(BatteryService.BATTERY_LEVEL);
+            const value = await characteristic.readValue();
+            const batteryLevel = value.getUint8(0); // Nivel de batería (0-100)
+            return batteryLevel;
+        }
+        async function getSoftwareVersion(server) {
+            const service = await server.getPrimaryService(BLEInformationService.SERVICE_UUID);
+            const characteristic = await service.getCharacteristic(BLEInformationService.SOFTWARE_VERSION);
+            const value = await characteristic.readValue();
+            return new TextDecoder().decode(value);
+        }
+        async function getHardwareVersion(server) {
+            const service = await server.getPrimaryService(BLEInformationService.SERVICE_UUID);
+            const characteristic = await service.getCharacteristic(BLEInformationService.HARDWARE_VERSION);
+            const value = await characteristic.readValue();
+            return new TextDecoder().decode(value);
+        }
+        async function getApiVersion(server) {
+            const service = await server.getPrimaryService(BLEInformationService.SERVICE_UUID);
+            const characteristic = await service.getCharacteristic(BLEInformationService.API_VERSION);
+            const value = await characteristic.readValue();
+            return new TextDecoder().decode(value);
+        }
+        async function getManufacturer(server) {
+            const service = await server.getPrimaryService(BLEInformationService.SERVICE_UUID);
+            const characteristic = await service.getCharacteristic(BLEInformationService.MANUFACTURER);
+            const value = await characteristic.readValue();
+            return new TextDecoder().decode(value);
+        }
+        //  Error: No Services matching UUID 00001800-0000-1000-8000-00805f9b34fb found in Device.
+        // async function getDeviceName(server) {
+        //     const service = await server.getPrimaryService(GenericService.SERVICE_UUID);
+        //     const characteristic = await service.getCharacteristic(GenericService.DEVICE_NAME);
+        //     const value = await characteristic.readValue();
+        //     return new TextDecoder().decode(value);
+        // }
+
+        connectButton.addEventListener('click', async () => {
+            try {
+                device = await navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true,
+                    services: ["battery_service"],
+                    // filters: [{
+                    //     manufacturerData: [
+                    //         { companyIdentifier: 0x0e29 } // Flipper Devices Inc. ???
+                    //     ]
+                    // }],
+                    optionalServices: [
+                        BLESerialService.SERVICE_UUID, 
+                        BatteryService.SERVICE_UUID, 
+                        GenericService.SERVICE_UUID, 
+                        BLEInformationService.SERVICE_UUID 
+                    ],
+                })
+                const devices = await navigator.bluetooth.getDevices()
+                if(devices.length > 0) {
+                    server = await device.gatt.connect()
+
+                    // Obtener servicio y características
+                    let service = await server.getPrimaryService(
+                        BLESerialService.SERVICE_UUID
+                    )
+                    tx = await service.getCharacteristic(
+                        BLESerialService.TX
+                    )
+                    rx = await service.getCharacteristic(
+                        BLESerialService.RX
+                    )
+
+                    await rx.startNotifications();
+                    rx.addEventListener( // <--- I don't get any data ??
+                        "characteristicvaluechanged",
+                        (event)=> {
+                            console.log('rx event',event)
+                            //  TODO: Read RX event and parse information
+
+                            // const dataView = event.target.value; // DataView
+                            // const uint8Array = new Uint8Array(
+                            //     dataView.buffer,
+                            //     dataView.byteOffset,
+                            //     dataView.byteLength
+                            // );
+
+                            // console.log("Raw Data:", uint8Array);
+                            // console.log("Decoded String (UTF-8):", new TextDecoder().decode(uint8Array));
+                            
+                            // try {
+                            //     const reader = protobuf.Reader.create(uint8Array);
+                            //     const message = PB.Main.decodeDelimited(reader);
+                            //     console.log("Decoded Protobuf Message:", message);
+                            // } catch (error) {
+                            //     console.error("Error decoding Protobuf message:", error);
+                            // }
+                            
+
+                        },
+                        false
+                    );
+
+                    //  # Device Information
+                    let flipperInformation = `Flipper connected!\nName: ${device.name}\nId: ${device.id}\nBattery: ${await getBatteryLevel(server)}%\nFirmware info: ${await getSoftwareVersion(server)}\nHardware info: ${await getHardwareVersion(server)}\nApi version: ${await getApiVersion(server)}\nManufacturer: ${await getManufacturer(server)}`;
+                    console.log(flipperInformation);
+                    resultPre.innerHTML = flipperInformation;
+                    
+
+                    //  # RPC Session
+                    //  Start RPC
+                    let rpcState = await service.getCharacteristic(BLESerialService.RPC_STATE);
+                    let stateValue = await rpcState.readValue();
+                    
+                    
+                    let result = await tx.writeValue(new TextEncoder().encode("start_rpc_session\r"));
+                    
+                    console.log('result',result)
+                    // await tx.writeValue(new TextEncoder().encode("start_rpc_session\r"));
+
+                    
+                    rpcState = await service.getCharacteristic(BLESerialService.RPC_STATE);
+                    stateValue = await rpcState.readValue();
+                    
+                    console.log("RPC State:", new Uint8Array(stateValue.buffer));
+
+
+
+                    //  Ping
+                    let message = PB.Main.create({
+                        commandId: 1,
+                        hasNext: undefined,
+                        systemPingRequest: {}
+                    })
+                    let data = new Uint8Array(PB.Main.encodeDelimited(message).finish())
+
+                    console.log('data',data)
+        
+                    result = await tx.writeValue(data);
+
+
+                    rpcState = await service.getCharacteristic(BLESerialService.RPC_STATE);
+                    stateValue = await rpcState.readValue();
+                    
+                    console.log("RPC State:", new Uint8Array(stateValue.buffer));
+
+
+
+                    //  Protobuf version
+                    message = PB.Main.create({
+                        commandId: 2,
+                        hasNext: undefined,
+                        systemProtobufVersionRequest: {}
+                    })
+                    data = new Uint8Array(PB.Main.encodeDelimited(message).finish())
+
+                    console.log('data',data)
+
+                    result = await tx.writeValue(data);
+
+
+                    rpcState = await service.getCharacteristic(BLESerialService.RPC_STATE);
+                    stateValue = await rpcState.readValue();
+                    
+                    console.log("RPC State:", new Uint8Array(stateValue.buffer));
+                    
+                }
+            } catch(error) {
+                console.error(error)
+            }
+        }, false);
+    </script>
+    
+</body>
+</html>
